@@ -56,7 +56,7 @@ index b7ff8df..52a7efd 100755
 /sys/class/backlight/backlight/brightness
 /sys/class/backlight/backlight_extend/brightness
 ```
-3. Apply backlight.patch.
+3. Apply backlight_1.patch and backlight_2.patch.
 4. Update api.
 ```
 $ make update-api
@@ -68,7 +68,7 @@ $ make update-api
 ### Settings
 Settings->Display->Extern Brightness level.
 
-### API
+### Method 1, only adjust the value without saving
 1. Add ILightsService.aidl to app/src/main/aidl/android/os/ILightsService.aidl.
 ```
 package android.os;
@@ -141,6 +141,28 @@ public class Lights {
     }
 }
 
+```
+
+### Method 2, adjust and save the value
+```
+public void saveMainBrightness(int brightness) {
+    try {
+        Settings.System.putInt(mContext.getContentResolver(), Settings.System.SCREEN_BRIGHTNESS, brightness);
+    } catch (Exception localException) {
+        localException.printStackTrace();
+    }
+}
+
+public void saveSubBrightness(int brightness) {
+    try {
+        /**
+         * Settings.System.SCREEN_BRIGHTNESS_EXT = "screen_brightness_ext"
+         */
+        Settings.System.putInt(mContext.getContentResolver(), "screen_brightness_ext", brightness);
+    } catch (Exception localException) {
+        localException.printStackTrace();
+    }
+}
 ```
 
 ## Developed By

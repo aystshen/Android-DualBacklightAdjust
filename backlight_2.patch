@@ -1,0 +1,176 @@
+commit d54f9a415319e9b290385af94a93b1d25377af43
+Author: shenhb <shenhb@topband.com.cn>
+Date:   Mon Sep 2 14:02:43 2019 +0800
+
+    【背光】副屏背光调节保存当前值
+
+diff --git a/frameworks/base/core/java/android/os/PowerManager.java b/frameworks/base/core/java/android/os/PowerManager.java
+index e95ea69..744082a 100755
+--- a/frameworks/base/core/java/android/os/PowerManager.java
++++ b/frameworks/base/core/java/android/os/PowerManager.java
+@@ -609,6 +609,15 @@ public final class PowerManager {
+         return mContext.getResources().getInteger(
+                 com.android.internal.R.integer.config_screenBrightnessSettingDefault);
+     }
++    
++    /**
++     * Gets the default extern screen brightness setting.
++     * @hide
++     */
++    public int getDefaultScreenBrightnessSettingExt() {
++        return mContext.getResources().getInteger(
++                com.android.internal.R.integer.config_screenBrightnessSettingDefaultExt);
++    }
+ 
+     /**
+      * Gets the minimum supported screen brightness setting for VR Mode.
+diff --git a/frameworks/base/core/res/res/values/config.xml b/frameworks/base/core/res/res/values/config.xml
+index 7d2e30c..dbdd94f 100755
+--- a/frameworks/base/core/res/res/values/config.xml
++++ b/frameworks/base/core/res/res/values/config.xml
+@@ -1161,6 +1161,10 @@
+     <!-- Default screen brightness setting.
+          Must be in the range specified by minimum and maximum. -->
+     <integer name="config_screenBrightnessSettingDefault">102</integer>
++	
++	<!-- Default extern screen brightness setting.
++         Must be in the range specified by minimum and maximum. -->
++    <integer name="config_screenBrightnessSettingDefaultExt">102</integer>
+ 
+     <!-- Default screen brightness for VR setting. -->
+     <integer name="config_screenBrightnessForVrSettingDefault">86</integer>
+diff --git a/frameworks/base/core/res/res/values/symbols.xml b/frameworks/base/core/res/res/values/symbols.xml
+old mode 100644
+new mode 100755
+index 15a353b..f216f0d
+--- a/frameworks/base/core/res/res/values/symbols.xml
++++ b/frameworks/base/core/res/res/values/symbols.xml
+@@ -1843,6 +1843,7 @@
+   <java-symbol type="integer" name="config_screenBrightnessSettingMinimum" />
+   <java-symbol type="integer" name="config_screenBrightnessSettingMaximum" />
+   <java-symbol type="integer" name="config_screenBrightnessSettingDefault" />
++  <java-symbol type="integer" name="config_screenBrightnessSettingDefaultExt" />
+   <java-symbol type="integer" name="config_screenBrightnessForVrSettingDefault" />
+   <java-symbol type="integer" name="config_screenBrightnessForVrSettingMaximum" />
+   <java-symbol type="integer" name="config_screenBrightnessForVrSettingMinimum" />
+diff --git a/frameworks/base/packages/SettingsProvider/res/values/defaults.xml b/frameworks/base/packages/SettingsProvider/res/values/defaults.xml
+index a6a6ee8..c7f59df 100755
+--- a/frameworks/base/packages/SettingsProvider/res/values/defaults.xml
++++ b/frameworks/base/packages/SettingsProvider/res/values/defaults.xml
+@@ -31,6 +31,7 @@
+     <bool name="def_accelerometer_rotation">true</bool>
+     <!-- Default screen brightness, from 0 to 255.  102 is 40%. -->
+     <integer name="def_screen_brightness">102</integer>
++    <integer name="def_screen_brightness_ext">102</integer>
+     <bool name="def_screen_brightness_automatic_mode">false</bool>
+     <fraction name="def_window_animation_scale">100%</fraction>
+     <fraction name="def_window_transition_scale">100%</fraction>
+diff --git a/frameworks/base/packages/SettingsProvider/src/com/android/providers/settings/DatabaseHelper.java b/frameworks/base/packages/SettingsProvider/src/com/android/providers/settings/DatabaseHelper.java
+index 78480a6..009b315 100755
+--- a/frameworks/base/packages/SettingsProvider/src/com/android/providers/settings/DatabaseHelper.java
++++ b/frameworks/base/packages/SettingsProvider/src/com/android/providers/settings/DatabaseHelper.java
+@@ -2315,6 +2315,9 @@ class DatabaseHelper extends SQLiteOpenHelper {
+ 
+             loadIntegerSetting(stmt, Settings.System.SCREEN_BRIGHTNESS,
+                     R.integer.def_screen_brightness);
++                    
++            loadIntegerSetting(stmt, Settings.System.SCREEN_BRIGHTNESS_EXT,
++                    R.integer.def_screen_brightness_ext);
+ 
+             loadBooleanSetting(stmt, Settings.System.SCREEN_BRIGHTNESS_MODE,
+                     R.bool.def_screen_brightness_automatic_mode);
+diff --git a/frameworks/base/packages/SettingsProvider/src/com/android/providers/settings/SettingsProtoDumpUtil.java b/frameworks/base/packages/SettingsProvider/src/com/android/providers/settings/SettingsProtoDumpUtil.java
+old mode 100644
+new mode 100755
+diff --git a/frameworks/base/services/core/java/com/android/server/power/PowerManagerService.java b/frameworks/base/services/core/java/com/android/server/power/PowerManagerService.java
+index 3d9c767..c80b423 100755
+--- a/frameworks/base/services/core/java/com/android/server/power/PowerManagerService.java
++++ b/frameworks/base/services/core/java/com/android/server/power/PowerManagerService.java
+@@ -239,8 +239,10 @@ public final class PowerManagerService extends SystemService
+     private Notifier mNotifier;
+     private WirelessChargerDetector mWirelessChargerDetector;
+     private SettingsObserver mSettingsObserver;
++    private ExternScreenBrightnessSettingsObserver mExternScreenBrightnessSettingsObserver;
+     private DreamManagerInternal mDreamManager;
+     private Light mAttentionLight;
++    private Light mExternScreenBackLight;
+ 
+     private final Object mLock = LockGuard.installNewLock(LockGuard.INDEX_POWER);
+ 
+@@ -457,11 +459,16 @@ public final class PowerManagerService extends SystemService
+     private int mScreenBrightnessSettingMinimum;
+     private int mScreenBrightnessSettingMaximum;
+     private int mScreenBrightnessSettingDefault;
++    private int mScreenBrightnessSettingDefaultExt;
+     private int mScreenBrightnessForVrSettingDefault;
+ 
+     // The screen brightness setting, from 0 to 255.
+     // Use -1 if no value has been set.
+     private int mScreenBrightnessSetting;
++    
++    // The extern screen brightness setting, from 0 to 255.
++    // Use -1 if no value has been set.
++    private int mScreenBrightnessSettingExt;
+ 
+     // The screen brightness setting, from 0 to 255, to be used while in VR Mode.
+     private int mScreenBrightnessForVrSetting;
+@@ -732,6 +739,7 @@ public final class PowerManagerService extends SystemService
+             mScreenBrightnessSettingMinimum = pm.getMinimumScreenBrightnessSetting();
+             mScreenBrightnessSettingMaximum = pm.getMaximumScreenBrightnessSetting();
+             mScreenBrightnessSettingDefault = pm.getDefaultScreenBrightnessSetting();
++            mScreenBrightnessSettingDefaultExt = pm.getDefaultScreenBrightnessSettingExt();
+             mScreenBrightnessForVrSettingDefault = pm.getDefaultScreenBrightnessForVrSetting();
+ 
+             SensorManager sensorManager = new SystemSensorManager(mContext, mHandler.getLooper());
+@@ -747,9 +755,11 @@ public final class PowerManagerService extends SystemService
+                     createSuspendBlockerLocked("PowerManagerService.WirelessChargerDetector"),
+                     mHandler);
+             mSettingsObserver = new SettingsObserver(mHandler);
++            mExternScreenBrightnessSettingsObserver = new ExternScreenBrightnessSettingsObserver(mHandler);
+ 
+             mLightsManager = getLocalService(LightsManager.class);
+             mAttentionLight = mLightsManager.getLight(LightsManager.LIGHT_ID_ATTENTION);
++            mExternScreenBackLight = mLightsManager.getLight(LightsManager.LIGHT_ID_BACKLIGHT_EXT);
+ 
+             // Initialize display power management.
+             mDisplayManagerInternal.initPowerManagement(
+@@ -815,6 +825,11 @@ public final class PowerManagerService extends SystemService
+         resolver.registerContentObserver(Settings.Global.getUriFor(
+                 Settings.Global.DEVICE_DEMO_MODE),
+                 false, mSettingsObserver, UserHandle.USER_SYSTEM);
++                
++        resolver.registerContentObserver(Settings.System.getUriFor(
++                Settings.System.SCREEN_BRIGHTNESS_EXT),
++                false, mExternScreenBrightnessSettingsObserver, UserHandle.USER_ALL);
++                
+         IVrManager vrManager = (IVrManager) getBinderService(Context.VR_SERVICE);
+         if (vrManager != null) {
+             try {
+@@ -3820,7 +3835,26 @@ public final class PowerManagerService extends SystemService
+         @Override
+         public void onChange(boolean selfChange, Uri uri) {
+             synchronized (mLock) {
+-                handleSettingsChangedLocked();
++                    handleSettingsChangedLocked();
++            }
++        }
++    }
++    
++    private final class ExternScreenBrightnessSettingsObserver extends ContentObserver {
++        public ExternScreenBrightnessSettingsObserver(Handler handler) {
++            super(handler);
++        }
++
++        @Override
++        public void onChange(boolean selfChange, Uri uri) {
++            synchronized (mLock) {
++                final ContentResolver resolver = mContext.getContentResolver();
++                mScreenBrightnessSettingExt = Settings.System.getIntForUser(resolver,
++                    Settings.System.SCREEN_BRIGHTNESS_EXT, mScreenBrightnessSettingDefaultExt,
++                    UserHandle.USER_CURRENT);
++                if (null != mExternScreenBackLight) {
++                    mExternScreenBackLight.setBrightness(mScreenBrightnessSettingExt);
++                }
+             }
+         }
+     }
