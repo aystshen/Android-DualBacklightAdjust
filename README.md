@@ -16,7 +16,7 @@ index b7ff8df..52a7efd 100755
         };
 
 +       backlight_extend: backlight_extend {
-+               compatible = "pwm-backlight";
++               compatible = "pwm-backlight-ext";
 +               brightness-levels = <
 +                       255 231 231 230 230 229 229 229 228 228
 +                       228 227 227 227 226 226 226 226 225 225
@@ -56,7 +56,7 @@ index b7ff8df..52a7efd 100755
 /sys/class/backlight/backlight/brightness
 /sys/class/backlight/backlight_extend/brightness
 ```
-3. Apply backlight_1.patch and backlight_2.patch.
+3. Apply backlight_1.patch、 backlight_2.patch and u-boot.patch.
 4. Update api.
 ```
 $ make update-api

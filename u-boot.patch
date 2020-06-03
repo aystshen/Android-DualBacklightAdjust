@@ -1,0 +1,262 @@
+commit 24622bfcd28e19345e2bf7d6cc2d4e4755d9da09
+Author: shenhb <shenhb@topband.com.cn>
+Date:   Fri May 29 14:48:07 2020 +0800
+
+    【双背光】uboot支持双路背光控制
+
+diff --git a/kernel/arch/arm/boot/dts/rk3288-android.dtsi b/kernel/arch/arm/boot/dts/rk3288-android.dtsi
+index b3752df..0b63112 100755
+--- a/kernel/arch/arm/boot/dts/rk3288-android.dtsi
++++ b/kernel/arch/arm/boot/dts/rk3288-android.dtsi
+@@ -222,7 +222,7 @@
+ 	};
+ 
+ 	backlight_extend: backlight_extend {
+-		compatible = "pwm-backlight";
++		compatible = "pwm-backlight-ext";
+ 		brightness-levels = <
+ 			255 231 231 230 230 229 229 229 228 228
+ 			228 227 227 227 226 226 226 226 225 225
+@@ -253,6 +253,7 @@
+ 		default-brightness-level = <128>;
+ 		pwms = <&pwm2 0 25000 0>;
+ 	};
++
+ 	display-subsystem {
+ 		status = "okay";
+ 
+diff --git a/kernel/drivers/video/backlight/pwm_bl.c b/kernel/drivers/video/backlight/pwm_bl.c
+old mode 100644
+new mode 100755
+index e6c38db..f20a6a9
+--- a/kernel/drivers/video/backlight/pwm_bl.c
++++ b/kernel/drivers/video/backlight/pwm_bl.c
+@@ -183,6 +183,7 @@ static int pwm_backlight_parse_dt(struct device *dev,
+ 
+ static struct of_device_id pwm_backlight_of_match[] = {
+ 	{ .compatible = "pwm-backlight" },
++    { .compatible = "pwm-backlight-ext" },
+ 	{ }
+ };
+ 
+diff --git a/u-boot/drivers/video/backlight/pwm_bl.c b/u-boot/drivers/video/backlight/pwm_bl.c
+old mode 100644
+new mode 100755
+index d34d790..e9d2a8b
+--- a/u-boot/drivers/video/backlight/pwm_bl.c
++++ b/u-boot/drivers/video/backlight/pwm_bl.c
+@@ -13,7 +13,8 @@
+ 
+ DECLARE_GLOBAL_DATA_PTR;
+ 
+-#define COMPAT_ROCKCHIP_BL "pwm-backlight"
++#define COMPAT_ROCKCHIP_BL      "pwm-backlight"
++#define COMPAT_ROCKCHIP_BL_EXT  "pwm-backlight-ext"
+ 
+ 
+ #define RK_PWM_DISABLE                  (0 << 0)
+@@ -105,7 +106,7 @@ struct pwm_bl {
+ 	int *levels;
+ };
+ 
+-struct pwm_bl bl;
++struct pwm_bl bl, bl_ext;
+ static void write_pwm_reg(struct pwm_bl *bl, int reg, int val)
+ {
+ 	writel(val, bl->base + reg);
+@@ -127,66 +128,71 @@ static int get_pclk_pwm(uint32 pwm_id)
+ }
+ 
+ #ifdef CONFIG_OF_LIBFDT
+-static int rk_bl_parse_dt(const void *blob)
++static int rk_bl_parse_dt(const void *blob, 
++                            struct pwm_bl *bl, 
++                            const char *compatible)
+ {
+ 	u32 data[4] = {0};
+ 	int len, arg_counts;
+ 	int pwm_node;
+ 
+-	bl.node = fdt_node_offset_by_compatible(blob,
+-					0, COMPAT_ROCKCHIP_BL);
+-	if (bl.node < 0) {
++	bl->node = fdt_node_offset_by_compatible(blob,
++					0, compatible);
++	if (bl->node < 0) {
+ 		debug("can't find dts node for backlight\n");
+-		bl.status = 0;
++		bl->status = 0;
+ 		return -ENODEV;
+ 	}
+-	if (!fdt_device_is_available(blob, bl.node)) {
++	if (!fdt_device_is_available(blob, bl->node)) {
+ 		debug("device backlight is disabled\n");
+-		bl.status = 0;
++		bl->status = 0;
+ 		return -EPERM;
+ 	}
+-	fdtdec_decode_gpio(blob, bl.node, "enable-gpios", &bl.bl_en);
+-	bl.bl_en.flags = !(bl.bl_en.flags  & OF_GPIO_ACTIVE_LOW);
++	fdtdec_decode_gpio(blob, bl->node, "enable-gpios", &bl->bl_en);
++	bl->bl_en.flags = !(bl->bl_en.flags  & OF_GPIO_ACTIVE_LOW);
+ 
+-	arg_counts = fdtdec_get_int_array_count(blob, bl.node, "pwms", data,
++	arg_counts = fdtdec_get_int_array_count(blob, bl->node, "pwms", data,
+ 						ARRAY_SIZE(data));
+-	if (fdtdec_get_int_array(blob, bl.node, "pwms", data,
++	if (fdtdec_get_int_array(blob, bl->node, "pwms", data,
+ 			arg_counts)) {
+ 		debug("Cannot decode PWM property pwms\n");
+-		bl.status = 0;
++		bl->status = 0;
+ 		return -ENODEV;
+ 	}
+ 
+-	bl.period = data[2];
+-	bl.polarity = data[3];
++	bl->period = data[2];
++	bl->polarity = data[3];
+ 
+ 	pwm_node = fdt_node_offset_by_phandle(blob, data[0]);
+ 
+-	bl.base = fdtdec_get_addr_size_auto_noparent(blob, pwm_node,
++	bl->base = fdtdec_get_addr_size_auto_noparent(blob, pwm_node,
+ 						     "reg", 0, NULL);
+-	bl.id = get_pwm_id(bl.base);
+-	debug("bl id = %d, base= 0x%x\n", bl.id, bl.base);
+-	fdt_getprop(blob, bl.node, "brightness-levels", &len);
+-	bl.max_brightness = len / sizeof(u32);
+-	bl.levels = malloc(len);
+-	if (!bl.levels) {
+-		printf("malloc for bl levels fail\n");
++	bl->id = get_pwm_id(bl->base);
++	debug("bl id = %d, base= 0x%x\n", bl->id, bl->base);
++	fdt_getprop(blob, bl->node, "brightness-levels", &len);
++	bl->max_brightness = len / sizeof(u32);
++	bl->levels = malloc(len);
++	if (!bl->levels) {
++		debug("malloc for bl levels fail\n");
+ 		return -ENOMEM;
+ 	}
+-	if (fdtdec_get_int_array(blob, bl.node, "brightness-levels",
+-		(u32 *)bl.levels, len >> 2)) {
+-		printf("Cannot decode brightness-levels\n");
++	if (fdtdec_get_int_array(blob, bl->node, "brightness-levels",
++		(u32 *)bl->levels, len >> 2)) {
++		debug("Cannot decode brightness-levels\n");
+ 		return -EINVAL;
+ 	}
+ 
+-	bl.dft_brightness = fdtdec_get_int(blob, bl.node, "default-brightness-level", 48);
+-	bl.status = 1;
++	bl->dft_brightness = fdtdec_get_int(blob, bl->node, "default-brightness-level", 48);
++	bl->status = 1;
++    
+ 	return 0;
+ }
+ #endif /* CONFIG_OF_LIBFDT */
+ 
+ 
+-int rk_pwm_bl_config(int brightness)
++int rk_pwm_bl_config_impl(int brightness, 
++                          struct pwm_bl *bl, 
++                          const char *compatible)
+ {
+ 	u64 val, div, clk_rate;
+ 	unsigned long prescale = 0, pv, dc;
+@@ -195,39 +201,39 @@ int rk_pwm_bl_config(int brightness)
+ 	int duty_ns, period_ns;
+ 	int ret;
+ 
+-	if (!bl.node) {
++	if (!bl->node) {
+ #ifdef CONFIG_OF_LIBFDT
+-		debug("rk pwm parse dt start.\n");
++		debug("%s: rk pwm parse dt %s start.\n", __func__, compatible);
+ 		if (!gd->fdt_blob)
+ 			return -1;
+ 
+-		ret = rk_bl_parse_dt(gd->fdt_blob);
+-		debug("rk pwm parse dt end.\n");
++		ret = rk_bl_parse_dt(gd->fdt_blob, bl, compatible);
++		debug("%s: rk pwm parse dt %s end.\n", __func__, compatible);
+ 		if (ret < 0)
+ 			return ret;
+ #endif
+-		rk_iomux_config(bl.id + RK_PWM0_IOMUX);
+-		gpio_direction_output(bl.bl_en.gpio, bl.bl_en.flags);
++		rk_iomux_config(bl->id + RK_PWM0_IOMUX);
++		gpio_direction_output(bl->bl_en.gpio, bl->bl_en.flags);
+ 	}
+ 
+-	if (!bl.status)
++	if (!bl->status)
+ 		return -EPERM;
+ 
+ 	if (brightness == 0)
+-		gpio_set_value(bl.bl_en.gpio, !(bl.bl_en.flags));
++		gpio_set_value(bl->bl_en.gpio, !(bl->bl_en.flags));
+ 	else
+-		gpio_set_value(bl.bl_en.gpio, bl.bl_en.flags);
++		gpio_set_value(bl->bl_en.gpio, bl->bl_en.flags);
+ 
+ 	if (brightness < 0)
+-		brightness = bl.dft_brightness;
++		brightness = bl->dft_brightness;
+ 	debug("%s: brightness: %d\n", __func__, brightness);
+-	brightness = bl.levels[brightness];
+-	duty_ns = (brightness * bl.period)/bl.max_brightness;
+-	period_ns = bl.period;
++	brightness = bl->levels[brightness];
++	duty_ns = (brightness * bl->period)/bl->max_brightness;
++	period_ns = bl->period;
+ 	on   =  RK_PWM_ENABLE;
+ 	conf = PWM_OUTPUT_LEFT|PWM_LP_DISABLE|PWM_CONTINUMOUS;
+ 
+-	if (bl.polarity == PWM_POLARITY_INVERSED)
++	if (bl->polarity == PWM_POLARITY_INVERSED)
+ 		conf |= PWM_DUTY_NEGATIVE | PWM_INACTIVE_POSTIVE;
+ 	else
+ 		conf |= PWM_DUTY_POSTIVE | PWM_INACTIVE_NEGATIVE;
+@@ -243,7 +249,7 @@ int rk_pwm_bl_config(int brightness)
+ 	 * DC = (PWM_CLK_RATE * duty_ns) / (10^9 * (PRESCALE + 1))
+ 	 */
+ 
+-	clk_rate = get_pclk_pwm(bl.id);
++	clk_rate = get_pclk_pwm(bl->id);
+ 
+ 	while (1) {
+ 		div = 1000000000;
+@@ -274,18 +280,25 @@ int rk_pwm_bl_config(int brightness)
+ 	 */
+ 
+ 	conf |= (prescale << RK_PWM_PRESCALE);
+-	write_pwm_reg(&bl, PWM_REG_DUTY, dc);
+-	write_pwm_reg(&bl, PWM_REG_PERIOD, pv);
++	write_pwm_reg(bl, PWM_REG_DUTY, dc);
++	write_pwm_reg(bl, PWM_REG_PERIOD, pv);
+ 	#ifdef RK_VOP_PWM
+-	if (bl.id >= RK_VOP0_PWM) {
+-		write_pwm_reg(&bl, VOP_PWM_REG_CNTR, 0);
+-		write_pwm_reg(&bl, VOP_PWM_REG_CTRL, on|conf);
++	if (bl->id >= RK_VOP0_PWM) {
++		write_pwm_reg(bl, VOP_PWM_REG_CNTR, 0);
++		write_pwm_reg(bl, VOP_PWM_REG_CTRL, on|conf);
+ 	} else
+ 	#endif
+ 	{
+-		write_pwm_reg(&bl, PWM_REG_CNTR, 0);
+-		write_pwm_reg(&bl, PWM_REG_CTRL, on|conf);
++		write_pwm_reg(bl, PWM_REG_CNTR, 0);
++		write_pwm_reg(bl, PWM_REG_CTRL, on|conf);
+ 	}
+ 
+ 	return 0;
+ }
++
++int rk_pwm_bl_config(int brightness) {
++    rk_pwm_bl_config_impl(brightness, &bl, COMPAT_ROCKCHIP_BL);
++    rk_pwm_bl_config_impl(brightness, &bl_ext, COMPAT_ROCKCHIP_BL_EXT);
++    
++    return 0;
++}
